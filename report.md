@@ -115,3 +115,43 @@ docker run --rm -v jenkins_home:/target -v ~/backup:/backup \
 docker-compose up -d
 ```
 если Jenkins‑конфиг сломан навсегда — можно заново создать джобы по Jenkinsfile из Git.
+
+
+### Как восстановить нужный бэкап
+
+У тебя есть `jenkins_home_20260326_195149.tar.gz`
+
+Чтобы восстановить Jenkins из этого бэкапа, если контейнер сломается:
+
+Останови Jenkins‑контейнер:
+
+```bash
+sudo docker stop jenkins
+```
+Удали текущий volume:
+
+```bash
+sudo docker volume rm jenkins_home
+```
+Создай новый volume:
+
+```bash
+sudo docker volume create jenkins_home
+```
+
+Восстанови содержимое из бэкапа:
+```bash
+docker run --rm \
+  -v jenkins_home:/target \
+  -v ~/backup:/backup \
+  alpine:latest \
+  tar xzf /backup/jenkins_home_20260326_195149.tar.gz -C /target
+```
+
+Перезапусти Jenkins:
+
+```bash
+sudo docker start jenkins
+```
+
+После этого Jenkins снова запустится с этим бэкапом (настройками, плагинами и паролями).
