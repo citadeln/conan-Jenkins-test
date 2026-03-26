@@ -39,10 +39,11 @@ docker run --rm -v jenkins_home:/input:ro \
 Это и есть твой Mini‑DevOps‑стек.
 
 2.1. Создай репозиторий
-bash```
+```bash
 mkdir ~/devops-lab
 cd ~/devops-lab
 git init
+```
 Добавь файлы:
 
 docker-compose.yml (или docker-run-notes.md, если предпочитаешь живой docker run).
@@ -53,7 +54,7 @@ README.md — короткая инструкция, как запустить.
 
 Пример docker-compose.yml:
 
-text
+```text
 version: '3.8'
 
 services:
@@ -69,15 +70,21 @@ services:
 
 volumes:
   jenkins_home:
+```
+
 2.2. Закомить в Git
-bash```
+```bash
 git add docker-compose.yml Jenkinsfile README.md
 git commit -m "Initial Jenkins + Docker setup"
+```
+
 Если хочешь, залей в GitHub/GitLab:
 
 ```bash
 git remote add origin https://github.com/monroe/my-devops-lab.git
 git push -u origin main
+```
+
 3. Как это выглядит в практике
 Перед экспериментом:
 
@@ -92,6 +99,7 @@ git pull → обновляешь локальный docker-compose.yml и Jenki
 ```bash
 docker stop jenkins
 docker volume rm jenkins_home
+```
 восстанавливаешь данные:
 
 ```bash
@@ -99,21 +107,11 @@ docker volume create jenkins_home
 docker run --rm -v jenkins_home:/target -v ~/backup:/backup \
   alpine:latest \
   tar xzf /backup/jenkins_home_*.tar.gz -C /target
+```
+
 заново запускаешь Jenkins:
 
 ```bash
 docker-compose up -d
+```
 если Jenkins‑конфиг сломан навсегда — можно заново создать джобы по Jenkinsfile из Git.
-
-4. Профессиональность для сеньоров
-rsync + бэкап jenkins_home — базовый, но корректный подход; сеньоры обычно автоматизируют это через cron и контроль за местом хранения, а также через инструменты вроде restic / borg.
-
-docker-compose.yml и Jenkinsfile в Git — это уже инфраструктура как код, стандартный DevOps‑паттерн:
-
-можно развернуть Jenkins в любом окружении,
-
-можно тестировать пайплайны через CI/CD,
-
-можно откатывать изменения на уровне Git‑коммитов.
-
-То есть то, что ты сейчас делаешь, — это классический начальный DevOps‑стек, а не «детские снэпшоты» — в перспективе именно так работают с CI/CD‑инстансами.
