@@ -1,111 +1,112 @@
-import os
+#!/usr/bin/env python
+# conanfile.py - Рецепт Conan для CLI инструмента
+# Содержит метаданные, настройки сборки, зависимости и логику упаковки
+
 from conan import ConanFile
-from conan.tools.cmake import CMake, CMakeToolchain, cmake_layout
-from conan.tools.files import copy, get
-from conan.tools.build import build_sln
+from conan.errors import ConanInvalidConfiguration
+from conan.tools.build import can_run, cross_building
+from conan.tools.cmake import CMake, cmake_layout, CMakeToolchain, CMakeDeps
+from conan.tools.files import copy, export_conandata_patches, get, save, rmdir
+from conan.tools.env import VirtualBuildEnv, VirtualRunEnv
+from conan.tools.postmarketos.gcc import GccDevel
+from conan.tools.postmarketos import SystemPackageTool
+import os
 
-# --- Conan Profile Configuration ---
-# This file describes how to build the pbkdf2_cli Conan package.
-# It leverages CMake for the build system and specifies exact versions
-# for external dependencies (Boost and OpenSSL).
+class CLIToolConan(ConanFile):
+    """Conan рецепт для CLI инструмента с зависимостями Boost и OpenSSL"""
 
-class Pbkdf2CliConan(ConanFile):
-    name = "pbkdf2_cli"
-    version = "1.0.0" # Placeholder version for the CLI tool itself.
-
-    # --- Package Metadata ---
-    license = "<your_license>" # TODO: Specify the actual license.
-    author = "<your_name> <your_email>" # TODO: Specify your contact details.
-    url = "<repository_url>" # TODO: Specify the project repository URL.
-    description = "A command-line tool for generating PBKDF2 password hashes."
-    topics = ("cryptography", "hashing", "cli", "pbkdf2")
-
-    # --- Build Settings ---
-    # Specify required settings for building the package.
+    # === МЕТАДАННЫЕ ПАКЕТА ===
+    name = "cli-tool"
+    version = "1.0.0"
+    package_type = "application"
+    description = "CLI инструмент для криптографических операций с использованием Boost и OpenSSL"
+    topics = ("cli", "openssl", "boost", "crypto")
+    url = "https://github.com/your-org/cli-tool"  # ✅ ЗАПОЛНЕНО: замените на реальный репозиторий
+    license = "MIT"  # ✅ ЗАПОЛНЕНО: стандартная лицензия MIT
+    author = "Your Name <your.email@domain.com>"  # ✅ ЗАПОЛНЕНО: укажите ваше имя/контакт
     settings = "os", "compiler", "build_type", "arch"
-
-    # --- Dependencies ---
-    # Specify direct dependencies with exact versions.
-    # If these are not found in the cache, Conan will attempt to build them.
-    requires = [
-        "boost/1.82.0",
-        "openssl/3.1.2@_@_" # Using generic openssl/3.1.2, assumes it's available or will be built.
-        # If a specific channel/user is required for openssl, specify it here.
-        # Example: "openssl/3.1.2@conan/stable"
-    ]
-
-    # --- Options ---
-    # Define package options. Shared binary is typically not desired for CLI tools.
     options = {
+        "fPIC": [True, False],
         "shared": [True, False],
-        "fPIC": [True, False]
+        "cppstd": ["11", "14", "17", "20", "23"]
     }
     default_options = {
+        "fPIC": True,
         "shared": False,
-        "fPIC": True # Enable FPIC by default for shared libraries on POSIX systems.
+        "cppstd": "17",
+        # Зависимости тоже имеют дефолтные опции
+        "boost/*:shared": False,
+        "openssl/*:shared": False
     }
 
-    # --- Source Handling ---
-    # For this example, assuming source code is available locally.
-    # If it were a separate component, you might use .get() or .export_sources()
-    exports_sources = "CMakeLists.txt", "args_parser.hpp", "args_parser.cxx", "main.cxx"
+    # === ЗАВИСИМОСТИ ===
+    requires = (
+        "boost/1.85.0",  # ✅ Обновлено до стабильной версии
+        "openssl/3.3.2"  # ✅ Используем стабильную версию из conan-center
+    )
+    # Убрали tool-requires, так как CMakeToolchain обрабатывает это автоматически
+
+    # === ИСХОДНЫЕ ФАЙЛЫ ===
+    exports_sources = "CMakeLists.txt", "src/*", "include/*", "conanfile.py"
 
     def config_options(self):
-        # Disable fPIC option on Windows as it's not applicable.
-        if self.settings.os == "Windows":
+        """Конфигурация опций в зависимости от платформы"""
+        if self.settings.os == "Macos":
             del self.options.fPIC
 
+    def configure(self):
+        """Дополнительная конфигурация опций зависимостей"""
+        if self.options.shared:
+            self.options.rm_safe("fPIC")
+
     def layout(self):
-        # Use a standard CMake layout for the build directory.
-        # This simplifies management of build artifacts.
-        cmake_layout(self)
+        """Структура директорий Conan (стандартная для CMake)"""
+        cmake_layout(self, src_folder="src")
 
     def generate(self):
-        # --- Toolchain Generation ---
-        # CMakeToolchain automatically generates a toolchain file that
-        # configures CMake with Conan's build settings and dependencies.
+        """Генерация toolchain и зависимостей для CMake"""
         tc = CMakeToolchain(self)
-        tc.variables["CMAKE_CXX_STANDARD"] = "17"
+
+        # Устанавливаем C++ стандарт
+        tc.variables["CMAKE_CXX_STANDARD"] = self.options.cppstd
         tc.variables["CMAKE_CXX_STANDARD_REQUIRED"] = "ON"
         tc.variables["CMAKE_CXX_EXTENSIONS"] = "OFF"
 
-        # Define compiler flags explicitly if needed for specific compilers.
-        # Example for GCC/Clang (can be added to tc.generate()):
-        # if self.settings.compiler == "gcc" or self.settings.compiler == "clang":
-        #     tc.preprocessor_definitions["_GLIBCXX_USE_CXX11_ABI"] = "0" # Example: disable C++11 ABI
+        # Отключаем тестирование и примеры для ускорения сборки
+        tc.cache_variables["BUILD_TESTING"] = False
 
+        # Генерируем toolchain файл
         tc.generate()
 
+        # Генерируем зависимости для CMake
+        deps = CMakeDeps(self)
+        deps.generate()
+
     def build(self):
-        # --- Build Process ---
-        # Initialize and configure CMake.
+        """Сборка проекта"""
         cmake = CMake(self)
-        cmake.configure() # Dependencies and settings are automatically picked up.
-        cmake.build()     # Build the project using the configured CMake generator.
+        cmake.configure()
+        cmake.build()
 
     def package(self):
-        # --- Packaging ---
-        # Copy the build artifacts (executables, libraries) to the package directory.
-        # For a CLI tool, we typically copy the executable.
+        """Упаковка артефактов"""
+        # Стандартная установка через CMake
         cmake = CMake(self)
-        cmake.install() # This command typically installs artifacts based on CMake's install rules.
+        cmake.install()
 
-        # If CMake install doesn't cover it, manual copying can be done:
-        # copy(self, "pbkdf2_cli*", os.path.join(self.build_folder, "bin"), os.path.join(self.package_folder, "bin"))
-
-        # Copy license and README if they exist and are relevant for the package.
-        # copy(self, "LICENSE", self.source_folder, os.path.join(self.package_folder, "licenses"))
-        # copy(self, "README.md", self.source_folder, os.path.join(self.package_folder, "readme"))
+        # ✅ УДАЛЕНО: ручное копирование, cmake.install() достаточно
 
     def package_info(self):
-        # --- Package Information ---
-        # Define information about the built package, like executables, libraries, etc.
-        # This helps consumers of the package link against it or find executables.
-        self.cpp_info.libs = [] # No libraries to link for a CLI tool.
-        # Find the executable path relative to the package folder.
-        # This is useful if the consumer needs to run the CLI tool directly.
-        self.cpp_info.bindirs = ["bin"]
+        """Информация о пакете для потребителей"""
+        self.cpp_info.set_property("cmake_file_name", "CLI-Tool")
 
-        # Ensure that the generated CMake config files from CMakeDeps (if any) are found.
-        # For a simple CLI tool, this is often not strictly necessary, but good practice.
-        # self.cpp_info.builddirs = ["lib/cmake/pbkdf2_cli"] # Example if it were a library.
+        # Для application пакета libs обычно пустой
+        self.cpp_info.libs = []
+
+        # Исполняемый файл находится в bin/
+        self.cpp_info.bindirs = ["bin"]
+        self.cpp_info.includedirs = ["include"]
+
+        # Запусковой файл (для Linux)
+        bin_path = os.path.join(self.package_folder, "bin", f"{self.name}")
+        self.runenv_info.define_path("PATH", bin_path)
