@@ -1,7 +1,7 @@
 pipeline {
     agent {
         docker {
-            // ✅ АДАПТИРОВАНО: используем официальный Jenkins + устанавливаем Conan
+            // Используем официальный Jenkins + устанавливаем Conan
             image 'jenkins/jenkins:lts-jdk17'
             args '''
                 -v /var/run/docker.sock:/var/run/docker.sock 
@@ -21,7 +21,7 @@ pipeline {
     }
 
     environment {
-        // ✅ ГОТОВО К ЗАПУСКУ: стандартные настройки
+        // ГОТОВО К ЗАПУСКУ: стандартные настройки
         CONAN_USER_HOME = "/root/.conan"
         BUILD_TYPE = "Release"
         TARGET_ARCH = "x86_64"
@@ -41,7 +41,7 @@ pipeline {
                     sh "mkdir -p \$CONAN_USER_HOME"
                     sh "mkdir -p ${env.LOCAL_REPO_PATH}"
 
-                    // ✅ УСТАНОВКА CONAN (для Jenkins образа)
+                    // УСТАНОВКА CONAN (для Jenkins образа)
                     sh '''
                         apt-get update && apt-get install -y wget gnupg ca-certificates python3 python3-pip build-essential cmake curl
                         pip3 install conan
@@ -85,20 +85,20 @@ pipeline {
                         --confirm \
                         --build=missing
                 '''
-                echo "✅ Пакет cli-tool/1.0.0 успешно загружен!"
+                echo "Пакет cli-tool/1.0.0 успешно загружен!"
             }
         }
     }
 
     post {
         always {
-            echo "✅ Пайплайн завершен."
+            echo "Пайплайн завершен."
         }
         success {
-            echo "🎉 Сборка успешно завершена!"
+            echo "Сборка успешно завершена!"
         }
         failure {
-            echo "❌ Ошибка сборки!"
+            echo "Ошибка сборки!"
         }
     }
 }
