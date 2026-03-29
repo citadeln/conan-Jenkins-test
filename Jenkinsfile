@@ -1,104 +1,113 @@
 pipeline {
     agent {
         docker {
-            // Используем официальный Jenkins + устанавливаем Conan
-            image 'jenkins/jenkins:lts-jdk17'
-            args '''
-                -v /var/run/docker.sock:/var/run/docker.sock 
-                -v $HOME/.conan:/root/.conan 
-                --user root
-            '''
-            // Устанавливаем Conan и зависимости в контейнере
-            runArgs '-v /var/run/docker.sock:/var/run/docker.sock'
+            image 'conanio/gcc13:latest'
+            args '-u root --group-add $(id -g docker) -v /var/run/docker.sock:/var/run/docker.sock'
         }
     }
 
     options {
-        // Сохраняем только 10 последних сборок
-        buildDiscarder(logRotator(numToKeepStr: '10'))
-        // Отключаем параллельные сборки для этого job
+        buildDiscarder(logRotator(numToKeepStr: '10', artifactNumToKeepStr: '5'))
         disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+        timestamps()
     }
 
     environment {
-        // ГОТОВО К ЗАПУСКУ: стандартные настройки
-        CONAN_USER_HOME = "/root/.conan"
-        BUILD_TYPE = "Release"
-        TARGET_ARCH = "x86_64"
-        TARGET_OS = "Linux"
-
-        // Локальный Conan репозиторий для CI
-        LOCAL_REPO_NAME = "local_ci_repo"
-        LOCAL_REPO_PATH = "conan_repo"
+        CONAN_USER_HOME = "${WORKSPACE}/.conan"
+        CONAN_PROFILE = "default"
+        CONAN_GENERATORS = "cmake_find_package_multi"
     }
 
     stages {
-        stage('Prepare Environment') {
-            steps {
-                echo "Подготовка окружения для сборки ${env.JOB_NAME} #${env.BUILD_NUMBER}"
-                script {
-                    // Создаем директории
-                    sh "mkdir -p \$CONAN_USER_HOME"
-                    sh "mkdir -p ${env.LOCAL_REPO_PATH}"
-
-                    // УСТАНОВКА CONAN (для Jenkins образа)
-                    sh '''
-                        apt-get update && apt-get install -y wget gnupg ca-certificates python3 python3-pip build-essential cmake curl
-                        pip3 install conan
-                        conan --version
-                    '''
-
-                    // Добавляем локальный репозиторий
-                    sh "conan remote add --force ${env.LOCAL_REPO_NAME} ${env.WORKSPACE}/${env.LOCAL_REPO_PATH}"
-                    echo "Локальный репозиторий '${env.LOCAL_REPO_NAME}' готов"
+        stage('Validate') {
+            parallel {
+                stage('Files') {
+                    steps {
+                        sh '''
+                            [[ -f CMakeLists.txt ]] || { echo "CMakeLists.txt missing"; exit 1; }
+                            [[ -f conanfile.py ]] || { echo "conanfile.py missing"; exit 1; }
+                            conan inspect . --raw | jq -r '.name, .version'
+                        '''
+                    }
+                }
+                stage('Profile') {
+                    steps {
+                        sh 'conan profile detect --force && conan profile show default'
+                    }
                 }
             }
         }
 
-        stage('Build Conan Package (Release x86_64)') {
+        stage('Conan Install') {
             steps {
-                echo "Сборка Conan пакета ${env.name}/${env.version}..."
-                script {
-                    sh '''
-                        conan install . \
-                            --install-folder=build \
-                            --build=missing \
-                            -s arch=x86_64 \
-                            -s os=Linux \
-                            -s compiler.cppstd=17 \
-                            -s compiler.libcxx=libstdc++11 \
-                            -c tools.native_pkg_management.apt:disabled=True \
-                            -o *:fPIC=True \
-                            -o *:shared=False
-                    '''
-                }
-            }
-        }
-
-        stage('Upload Package') {
-            steps {
-                echo "Загрузка пакета в локальный репозиторий '${env.LOCAL_REPO_NAME}'..."
                 sh '''
-                    conan upload cli-tool/1.0.0 \
-                        --all \
-                        --remote=${LOCAL_REPO_NAME} \
-                        --confirm \
-                        --build=missing
+                    mkdir -p build && cd build
+                    conan install .. \
+                        --build=missing \
+                        -s build_type=Release \
+                        -pr=default \
+                        -of=. \
+                        --generator-set cmake_find_package_multi
                 '''
-                echo "Пакет cli-tool/1.0.0 успешно загружен!"
+            }
+        }
+
+        stage('Build & Test') {
+            parallel {
+                stage('Build') {
+                    steps {
+                        dir('build') {
+                            sh '''
+                                cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=conan_toolchain.cmake
+                                cmake --build . --parallel $(nproc)
+                            '''
+                        }
+                    }
+                }
+                stage('Test') {
+                    steps {
+                        dir('build') {
+                            sh './pbkdf2 --help && ./pbkdf2 --password test123 --iter 10'
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Package') {
+            when { anyOf { branch 'main'; branch 'develop' } }
+            steps {
+                sh '''
+                    conan create . monroe/testing --build=missing -pr=default
+                    mkdir -p conan_repo
+                    conan upload "*"@monroe/testing --all -r local_ci_repo --confirm
+                '''
             }
         }
     }
 
     post {
         always {
-            echo "Пайплайн завершен."
+            archiveArtifacts artifacts: 'build/**, conan_repo/**', allowEmptyArchive: true
+            junit 'build/test-results.xml'
+            publishHTML([
+                allowMissing: false,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'build',
+                reportFiles: 'index.html',
+                reportName: 'Build Report'
+            ])
         }
         success {
-            echo "Сборка успешно завершена!"
+            slackSend channel: '#ci', message: "${env.JOB_NAME} #${env.BUILD_NUMBER} SUCCESS"
         }
         failure {
-            echo "Ошибка сборки!"
+            slackSend channel: '#ci-failures', message: "${env.JOB_NAME} #${env.BUILD_NUMBER} FAILED"
+        }
+        cleanup {
+            sh 'docker system prune -f || true'
         }
     }
 }
